@@ -34,7 +34,7 @@ async fn start() -> anyhow::Result<()> {
             conn_str,
             mount_point,
         } => {
-            let redis_driver = RedisDriver::new(&conn_str).await?;
+            let driver = RedisDriver::new(&conn_str).await?;
             let mut mount_options = MountOptions::default();
             let uid = unsafe { libc::getuid() };
             let gid = unsafe { libc::getgid() };
@@ -44,7 +44,7 @@ async fn start() -> anyhow::Result<()> {
                 .uid(uid)
                 .gid(gid);
             let mut session = fuse3::raw::Session::new(mount_options)
-                .mount_with_unprivileged(fs::HelloWorld, mount_point)
+                .mount_with_unprivileged(fs::RedisFS { driver }, mount_point)
                 .await?;
             let handle = &mut session;
             tokio::select! {

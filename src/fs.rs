@@ -1,8 +1,8 @@
 use std::ffi::OsString;
 use std::iter::Skip;
+use std::str::FromStr;
 use std::time::SystemTime;
 
-use bytes::Bytes;
 use fuse3::raw::prelude::*;
 use fuse3::Result;
 use futures_util::stream;
@@ -12,11 +12,10 @@ use std::num::NonZeroU32;
 use std::time::Duration;
 use std::vec::IntoIter;
 
-const CONTENT: &str = "hello world\n";
+use crate::redis::RedisDriver;
 
 const PARENT_INODE: u64 = 1;
 const FILE_INODE: u64 = 2;
-const FILE_NAME: &str = "hello-world.txt";
 const PARENT_MODE: u16 = 0o755;
 const FILE_MODE: u16 = 0o644;
 const TTL: Duration = Duration::from_secs(1);
@@ -31,12 +30,25 @@ const STATFS: ReplyStatFs = ReplyStatFs {
     frsize: 0,
 };
 
-pub struct HelloWorld;
+pub struct RedisFS {
+    pub driver: RedisDriver,
+}
 
-impl Filesystem for HelloWorld {
+macro_rules! or_enoent {
+    ($expr:expr) => {
+        match $expr {
+            Ok(x) => x,
+            Err(_) => return Err(libc::ENOENT.into()),
+        }
+    };
+}
+
+impl Filesystem for RedisFS {
     async fn init(&self, _req: Request) -> Result<ReplyInit> {
         Ok(ReplyInit {
-            max_write: NonZeroU32::new(16 * 1024).unwrap(),
+            // 512mb
+            // https://stackoverflow.com/questions/5606106/what-is-the-maximum-value-size-you-can-store-in-redis
+            max_write: NonZeroU32::new(512 * 1024 * 1024).unwrap(),
         })
     }
 
@@ -47,15 +59,17 @@ impl Filesystem for HelloWorld {
             return Err(libc::ENOENT.into());
         }
 
-        if name != OsStr::new(FILE_NAME) {
-            return Err(libc::ENOENT.into());
-        }
+        let id = or_enoent!(
+            self.driver
+                .open_key(name.to_str().unwrap_or_default())
+                .await
+        );
 
         Ok(ReplyEntry {
             ttl: TTL,
             attr: FileAttr {
-                ino: FILE_INODE,
-                size: CONTENT.len() as u64,
+                ino: id,
+                size: 5000,
                 blocks: 0,
                 atime: SystemTime::now().into(),
                 mtime: SystemTime::now().into(),
@@ -98,12 +112,12 @@ impl Filesystem for HelloWorld {
                     blksize: 0,
                 },
             })
-        } else if inode == FILE_INODE {
+        } else {
             Ok(ReplyAttr {
                 ttl: TTL,
                 attr: FileAttr {
-                    ino: FILE_INODE,
-                    size: CONTENT.len() as _,
+                    ino: inode,
+                    size: 5000,
                     blocks: 0,
                     atime: SystemTime::now().into(),
                     mtime: SystemTime::now().into(),
@@ -117,15 +131,14 @@ impl Filesystem for HelloWorld {
                     blksize: 0,
                 },
             })
-        } else {
-            Err(libc::ENOENT.into())
         }
     }
 
     async fn open(&self, _req: Request, inode: u64, flags: u32) -> Result<ReplyOpen> {
-        if inode != PARENT_INODE && inode != FILE_INODE {
+        if inode != PARENT_INODE {
             return Err(libc::ENOENT.into());
         }
+        or_enoent!(self.driver.read(inode, 0, 1).await);
 
         Ok(ReplyOpen { fh: 0, flags })
     }
@@ -138,23 +151,8 @@ impl Filesystem for HelloWorld {
         offset: u64,
         size: u32,
     ) -> Result<ReplyData> {
-        if inode != FILE_INODE {
-            return Err(libc::ENOENT.into());
-        }
-
-        if offset as usize >= CONTENT.len() {
-            Ok(ReplyData { data: Bytes::new() })
-        } else {
-            let mut data = &CONTENT.as_bytes()[offset as usize..];
-
-            if data.len() > size as usize {
-                data = &data[..size as usize];
-            }
-
-            Ok(ReplyData {
-                data: Bytes::copy_from_slice(data),
-            })
-        }
+        let data = or_enoent!(self.driver.read(inode, offset, size).await);
+        Ok(ReplyData { data })
     }
 
     type DirEntryStream<'a> = Iter<Skip<IntoIter<Result<DirectoryEntry>>>> where Self: 'a;
@@ -164,17 +162,13 @@ impl Filesystem for HelloWorld {
         _req: Request,
         inode: u64,
         _fh: u64,
-        offset: i64,
+        _offset: i64,
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
-        if inode == FILE_INODE {
-            return Err(libc::ENOTDIR.into());
-        }
-
         if inode != PARENT_INODE {
             return Err(libc::ENOENT.into());
         }
 
-        let entries = vec![
+        let mut entries = vec![
             Ok(DirectoryEntry {
                 inode: PARENT_INODE,
                 kind: FileType::Directory,
@@ -187,13 +181,20 @@ impl Filesystem for HelloWorld {
                 name: OsString::from(".."),
                 offset: 2,
             }),
-            Ok(DirectoryEntry {
-                inode: FILE_INODE,
-                kind: FileType::RegularFile,
-                name: OsString::from(FILE_NAME),
-                offset: 3,
-            }),
         ];
+
+        let all = or_enoent!(self.driver.all_keys().await);
+        let mut offset = 3;
+
+        for (id, key) in all {
+            entries.push(Ok(DirectoryEntry {
+                inode: id,
+                kind: FileType::RegularFile,
+                name: or_enoent!(OsString::from_str(key.as_str())),
+                offset,
+            }));
+            offset += 1;
+        }
 
         Ok(ReplyDirectory {
             entries: stream::iter(entries.into_iter().skip(offset as usize)),
@@ -215,18 +216,14 @@ impl Filesystem for HelloWorld {
         _req: Request,
         parent: u64,
         _fh: u64,
-        offset: u64,
+        _offset: u64,
         _lock_owner: u64,
     ) -> Result<ReplyDirectoryPlus<Self::DirEntryPlusStream<'_>>> {
-        if parent == FILE_INODE {
-            return Err(libc::ENOTDIR.into());
-        }
-
         if parent != PARENT_INODE {
             return Err(libc::ENOENT.into());
         }
 
-        let entries = vec![
+        let mut entries = vec![
             Ok(DirectoryEntryPlus {
                 inode: PARENT_INODE,
                 generation: 0,
@@ -275,15 +272,21 @@ impl Filesystem for HelloWorld {
                 entry_ttl: TTL,
                 attr_ttl: TTL,
             }),
-            Ok(DirectoryEntryPlus {
-                inode: FILE_INODE,
+        ];
+
+        let all = or_enoent!(self.driver.all_keys().await);
+        let mut offset = 3;
+
+        for (id, key) in all {
+            entries.push(Ok(DirectoryEntryPlus {
+                inode: id,
                 generation: 0,
                 kind: FileType::Directory,
-                name: OsString::from(FILE_NAME),
+                name: or_enoent!(OsString::from_str(key.as_str())),
                 offset: 3,
                 attr: FileAttr {
-                    ino: FILE_INODE,
-                    size: CONTENT.len() as _,
+                    ino: id,
+                    size: 5000,
                     blocks: 0,
                     atime: SystemTime::now().into(),
                     mtime: SystemTime::now().into(),
@@ -298,8 +301,9 @@ impl Filesystem for HelloWorld {
                 },
                 entry_ttl: TTL,
                 attr_ttl: TTL,
-            }),
-        ];
+            }));
+            offset += 1;
+        }
 
         Ok(ReplyDirectoryPlus {
             entries: stream::iter(entries.into_iter().skip(offset as usize)),

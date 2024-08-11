@@ -7,6 +7,7 @@ edition = "2021"
 anyhow = "1.0.86"
 bytes = "1.7.1"
 clap = { version = "4.5.15", features = ["cargo", "derive"] }
+dashmap = "6.0.1"
 env_logger = "0.11.5"
 fuse3 = { version = "0.7.2", features = ["tokio-runtime", "unprivileged"] }
 futures-util = "0.3.30"
