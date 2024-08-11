@@ -5,9 +5,12 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
+bytes = "1.7.1"
 clap = { version = "4.5.15", features = ["cargo", "derive"] }
 env_logger = "0.11.5"
-fuser = "0.14.0"
+fuse3 = { version = "0.7.2", features = ["tokio-runtime", "unprivileged"] }
+futures-util = "0.3.30"
+
 libc = "0.2.155"
 log = "0.4.22"
 redis = { version = "0.26.1", features = ["aio", "tokio-comp"] }

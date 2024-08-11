@@ -1,5 +1,5 @@
 use clap::Parser;
-use fuser::MountOption;
+use fuse3::MountOptions;
 use log::error;
 use redis::RedisDriver;
 
@@ -35,12 +35,24 @@ async fn start() -> anyhow::Result<()> {
             mount_point,
         } => {
             let redis_driver = RedisDriver::new(&conn_str).await?;
-
-            let options = vec![MountOption::RO, MountOption::FSName("redis-fs".to_string())];
-            let mount_session = fuser::spawn_mount2(fs::HelloFS, mount_point, &options)?;
-
-            tokio::signal::ctrl_c().await?;
-            drop(mount_session);
+            let mut mount_options = MountOptions::default();
+            let uid = unsafe { libc::getuid() };
+            let gid = unsafe { libc::getgid() };
+            mount_options
+                .read_only(false)
+                .fs_name("redis-fs")
+                .uid(uid)
+                .gid(gid);
+            let mut session = fuse3::raw::Session::new(mount_options)
+                .mount_with_unprivileged(fs::HelloWorld, mount_point)
+                .await?;
+            let handle = &mut session;
+            tokio::select! {
+                res = handle => res.unwrap(),
+                _ = tokio::signal::ctrl_c() => {
+                    session.unmount().await.unwrap()
+                }
+            }
         }
     }
 
