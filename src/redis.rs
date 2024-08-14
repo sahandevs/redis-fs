@@ -1,6 +1,7 @@
 use std::sync::{atomic::AtomicU64, Arc};
 
 use bytes::Bytes;
+use log::warn;
 use redis::AsyncCommands;
 
 enum ValueState {
@@ -21,7 +22,7 @@ impl RedisDriver {
         let client = redis::Client::open(conn_str)?;
         Ok(Self {
             client,
-            next_id: Default::default(),
+            next_id: AtomicU64::new(5),
             id_to_value: Default::default(),
         })
     }
@@ -42,6 +43,9 @@ impl RedisDriver {
         };
         match &*val {
             ValueState::Read(x) => {
+                if x.len() < offset as _ {
+                    anyhow::bail!("something went wrong");
+                }
                 let mut data = &x[offset as usize..];
 
                 if data.len() > size as usize {
@@ -51,12 +55,18 @@ impl RedisDriver {
                 return Ok(Bytes::copy_from_slice(data));
             }
             ValueState::ToRead(key) => {
+                warn!("{key}");
                 let mut conn = self.client.get_multiplexed_async_connection().await?;
-                let val: Vec<u8> = conn.get(key).await?;
-                let mut data = &val.as_slice()[offset as usize..];
+                let Some(val): Option<Vec<u8>> = conn.get(key).await? else {
+                    anyhow::bail!("key not found!");
+                };
 
+                let mut data = &val.as_slice()[offset as usize..];
+                warn!("{data:?}");
                 if data.len() > size as usize {
                     data = &data[..size as usize];
+                } else {
+                    data = &data;
                 }
                 let data = Bytes::copy_from_slice(data);
 

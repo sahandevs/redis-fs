@@ -40,7 +40,7 @@ async fn start() -> anyhow::Result<()> {
             let gid = unsafe { libc::getgid() };
             mount_options
                 .read_only(false)
-                .fs_name("redis-fs")
+                .fs_name("redis_fs")
                 .uid(uid)
                 .gid(gid);
             let mut session = fuse3::raw::Session::new(mount_options)

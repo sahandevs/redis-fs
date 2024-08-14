@@ -7,6 +7,7 @@ use fuse3::raw::prelude::*;
 use fuse3::Result;
 use futures_util::stream;
 use futures_util::stream::Iter;
+use log::{error, info};
 use std::ffi::OsStr;
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -38,7 +39,12 @@ macro_rules! or_enoent {
     ($expr:expr) => {
         match $expr {
             Ok(x) => x,
-            Err(_) => return Err(libc::ENOENT.into()),
+            Err(e) => {
+                return {
+                    error!("{e:?}");
+                    Err(libc::ENOENT.into())
+                }
+            }
         }
     };
 }
@@ -48,14 +54,18 @@ impl Filesystem for RedisFS {
         Ok(ReplyInit {
             // 512mb
             // https://stackoverflow.com/questions/5606106/what-is-the-maximum-value-size-you-can-store-in-redis
-            max_write: NonZeroU32::new(512 * 1024 * 1024).unwrap(),
+            max_write: NonZeroU32::new(16 * 1024).unwrap(),
         })
     }
 
-    async fn destroy(&self, _req: Request) {}
+    async fn destroy(&self, _req: Request) {
+        info!("destroy");
+    }
 
     async fn lookup(&self, _req: Request, parent: u64, name: &OsStr) -> Result<ReplyEntry> {
+        info!("lookup {name:?} {parent}");
         if parent != PARENT_INODE {
+            error!("?");
             return Err(libc::ENOENT.into());
         }
 
@@ -64,6 +74,7 @@ impl Filesystem for RedisFS {
                 .open_key(name.to_str().unwrap_or_default())
                 .await
         );
+        info!("id = {id}");
 
         Ok(ReplyEntry {
             ttl: TTL,
@@ -93,6 +104,7 @@ impl Filesystem for RedisFS {
         _fh: Option<u64>,
         _flags: u32,
     ) -> Result<ReplyAttr> {
+        info!("getattr {inode}");
         if inode == PARENT_INODE {
             Ok(ReplyAttr {
                 ttl: TTL,
@@ -135,23 +147,22 @@ impl Filesystem for RedisFS {
     }
 
     async fn open(&self, _req: Request, inode: u64, flags: u32) -> Result<ReplyOpen> {
-        if inode != PARENT_INODE {
-            return Err(libc::ENOENT.into());
-        }
-        or_enoent!(self.driver.read(inode, 0, 1).await);
+        info!("open {inode} {flags}");
 
-        Ok(ReplyOpen { fh: 0, flags })
+        Ok(ReplyOpen { fh: inode, flags })
     }
 
     async fn read(
         &self,
         _req: Request,
         inode: u64,
-        _fh: u64,
+        fh: u64,
         offset: u64,
         size: u32,
     ) -> Result<ReplyData> {
-        let data = or_enoent!(self.driver.read(inode, offset, size).await);
+        info!("read {inode} {fh} {offset} {size}");
+        let data = or_enoent!(self.driver.read(fh, offset, size).await);
+        println!("{data:?}");
         Ok(ReplyData { data })
     }
 
@@ -164,7 +175,9 @@ impl Filesystem for RedisFS {
         _fh: u64,
         _offset: i64,
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
+        info!("readdir {inode}");
         if inode != PARENT_INODE {
+            info!("1 readdir {inode}");
             return Err(libc::ENOENT.into());
         }
 
@@ -202,7 +215,9 @@ impl Filesystem for RedisFS {
     }
 
     async fn access(&self, _req: Request, inode: u64, _mask: u32) -> Result<()> {
+        info!("access {inode}");
         if inode != PARENT_INODE && inode != FILE_INODE {
+            error!("access");
             return Err(libc::ENOENT.into());
         }
 
@@ -219,7 +234,9 @@ impl Filesystem for RedisFS {
         _offset: u64,
         _lock_owner: u64,
     ) -> Result<ReplyDirectoryPlus<Self::DirEntryPlusStream<'_>>> {
+        info!("readdirplus {parent}");
         if parent != PARENT_INODE {
+            println!("readdirplus");
             return Err(libc::ENOENT.into());
         }
 
@@ -308,9 +325,5 @@ impl Filesystem for RedisFS {
         Ok(ReplyDirectoryPlus {
             entries: stream::iter(entries.into_iter().skip(offset as usize)),
         })
-    }
-
-    async fn statfs(&self, _req: Request, _inode: u64) -> Result<ReplyStatFs> {
-        Ok(STATFS)
     }
 }
