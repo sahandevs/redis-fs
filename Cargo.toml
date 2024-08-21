@@ -2,6 +2,15 @@
 name = "redis-fs"
 version = "0.1.0"
 edition = "2021"
+authors = ["Sahand <sahandevs@gmail.com>"]
+license = "MIT"
+description = "Access your redis database from the file system!"
+readme = "README.md"
+homepage = "https://github.com/sahandevs/redis-fs"
+repository = "https://github.com/sahandevs/redis-fs"
+keywords = ["cli", "redis", "fuse"]
+categories = ["command-line-utilities", "filesystem"]
+
 [dependencies]
 anyhow = "1.0.86"
 bytes = "1.7.1"

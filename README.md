@@ -9,7 +9,7 @@ Access your redis database from the file system!
 
 ```
 # Install FUSE. see https://github.com/cberner/fuser#dependencies
-cargo install fuse_fs
+cargo install fuse-fs
 ```
 
 
