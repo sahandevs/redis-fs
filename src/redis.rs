@@ -1,7 +1,6 @@
 use std::sync::{atomic::AtomicU64, Arc};
 
 use bytes::Bytes;
-use log::warn;
 use redis::AsyncCommands;
 
 enum ValueState {
@@ -47,30 +46,29 @@ impl RedisDriver {
                     anyhow::bail!("something went wrong");
                 }
                 let mut data = &x[offset as usize..];
-
-                if data.len() > size as usize {
-                    data = &data[..size as usize];
-                }
-
-                return Ok(Bytes::copy_from_slice(data));
-            }
-            ValueState::ToRead(key) => {
-                warn!("{key}");
-                let mut conn = self.client.get_multiplexed_async_connection().await?;
-                let Some(val): Option<Vec<u8>> = conn.get(key).await? else {
-                    anyhow::bail!("key not found!");
-                };
-
-                let mut data = &val.as_slice()[offset as usize..];
-                warn!("{data:?}");
                 if data.len() > size as usize {
                     data = &data[..size as usize];
                 } else {
                     data = &data;
                 }
                 let data = Bytes::copy_from_slice(data);
+                return Ok(data);
+            }
+            ValueState::ToRead(key) => {
+                let mut conn = self.client.get_multiplexed_async_connection().await?;
+                let Some(value): Option<Vec<u8>> = conn.get(key).await? else {
+                    anyhow::bail!("key not found!");
+                };
 
-                self.id_to_value.entry(id).insert(ValueState::Read(val));
+                let mut data = &value.as_slice()[offset as usize..];
+                if data.len() > size as usize {
+                    data = &data[..size as usize];
+                } else {
+                    data = &data;
+                }
+                let data = Bytes::copy_from_slice(data);
+                drop(val);
+                self.id_to_value.entry(id).insert(ValueState::Read(value));
 
                 return Ok(data);
             }

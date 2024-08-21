@@ -7,7 +7,7 @@ use fuse3::raw::prelude::*;
 use fuse3::Result;
 use futures_util::stream;
 use futures_util::stream::Iter;
-use log::{error, info};
+use log::{error, trace};
 use std::ffi::OsStr;
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -20,16 +20,6 @@ const FILE_INODE: u64 = 2;
 const PARENT_MODE: u16 = 0o755;
 const FILE_MODE: u16 = 0o644;
 const TTL: Duration = Duration::from_secs(1);
-const STATFS: ReplyStatFs = ReplyStatFs {
-    blocks: 1,
-    bfree: 0,
-    bavail: 0,
-    files: 1,
-    ffree: 0,
-    bsize: 4096,
-    namelen: u32::MAX,
-    frsize: 0,
-};
 
 pub struct RedisFS {
     pub driver: RedisDriver,
@@ -41,7 +31,7 @@ macro_rules! or_enoent {
             Ok(x) => x,
             Err(e) => {
                 return {
-                    error!("{e:?}");
+                    trace!("or_enoent -> {e:?}");
                     Err(libc::ENOENT.into())
                 }
             }
@@ -59,11 +49,11 @@ impl Filesystem for RedisFS {
     }
 
     async fn destroy(&self, _req: Request) {
-        info!("destroy");
+        trace!("destroy");
     }
 
     async fn lookup(&self, _req: Request, parent: u64, name: &OsStr) -> Result<ReplyEntry> {
-        info!("lookup {name:?} {parent}");
+        trace!("lookup {name:?} {parent}");
         if parent != PARENT_INODE {
             error!("?");
             return Err(libc::ENOENT.into());
@@ -74,7 +64,6 @@ impl Filesystem for RedisFS {
                 .open_key(name.to_str().unwrap_or_default())
                 .await
         );
-        info!("id = {id}");
 
         Ok(ReplyEntry {
             ttl: TTL,
@@ -104,24 +93,24 @@ impl Filesystem for RedisFS {
         _fh: Option<u64>,
         _flags: u32,
     ) -> Result<ReplyAttr> {
-        info!("getattr {inode}");
+        trace!("getattr {inode}");
         if inode == PARENT_INODE {
             Ok(ReplyAttr {
                 ttl: TTL,
                 attr: FileAttr {
                     ino: PARENT_INODE,
-                    size: 0,
-                    blocks: 0,
+                    size: 4096,
+                    blocks: 1,
                     atime: SystemTime::now().into(),
                     mtime: SystemTime::now().into(),
                     ctime: SystemTime::now().into(),
                     kind: FileType::Directory,
-                    perm: PARENT_MODE,
+                    perm: fuse3::perm_from_mode_and_kind(FileType::Directory, PARENT_MODE.into()),
                     nlink: 0,
                     uid: 0,
                     gid: 0,
                     rdev: 0,
-                    blksize: 0,
+                    blksize: 4096,
                 },
             })
         } else {
@@ -147,7 +136,7 @@ impl Filesystem for RedisFS {
     }
 
     async fn open(&self, _req: Request, inode: u64, flags: u32) -> Result<ReplyOpen> {
-        info!("open {inode} {flags}");
+        trace!("open {inode} {flags}");
 
         Ok(ReplyOpen { fh: inode, flags })
     }
@@ -160,9 +149,8 @@ impl Filesystem for RedisFS {
         offset: u64,
         size: u32,
     ) -> Result<ReplyData> {
-        info!("read {inode} {fh} {offset} {size}");
+        trace!("read {inode} {fh} {offset} {size}");
         let data = or_enoent!(self.driver.read(fh, offset, size).await);
-        println!("{data:?}");
         Ok(ReplyData { data })
     }
 
@@ -175,9 +163,8 @@ impl Filesystem for RedisFS {
         _fh: u64,
         _offset: i64,
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
-        info!("readdir {inode}");
+        trace!("readdir {inode}");
         if inode != PARENT_INODE {
-            info!("1 readdir {inode}");
             return Err(libc::ENOENT.into());
         }
 
@@ -215,9 +202,8 @@ impl Filesystem for RedisFS {
     }
 
     async fn access(&self, _req: Request, inode: u64, _mask: u32) -> Result<()> {
-        info!("access {inode}");
+        trace!("access {inode}");
         if inode != PARENT_INODE && inode != FILE_INODE {
-            error!("access");
             return Err(libc::ENOENT.into());
         }
 
@@ -231,76 +217,49 @@ impl Filesystem for RedisFS {
         _req: Request,
         parent: u64,
         _fh: u64,
-        _offset: u64,
+        req_offset: u64,
         _lock_owner: u64,
     ) -> Result<ReplyDirectoryPlus<Self::DirEntryPlusStream<'_>>> {
-        info!("readdirplus {parent}");
+        trace!("readdirplus {parent}");
         if parent != PARENT_INODE {
-            println!("readdirplus");
             return Err(libc::ENOENT.into());
         }
 
-        let mut entries = vec![
-            Ok(DirectoryEntryPlus {
-                inode: PARENT_INODE,
-                generation: 0,
+        let mut entries = vec![Ok(DirectoryEntryPlus {
+            inode: PARENT_INODE,
+            generation: 0,
+            kind: FileType::Directory,
+            name: OsString::from("."),
+            offset: 1,
+            attr: FileAttr {
+                ino: PARENT_INODE,
+                size: 0,
+                blocks: 0,
+                atime: SystemTime::now().into(),
+                mtime: SystemTime::now().into(),
+                ctime: SystemTime::now().into(),
                 kind: FileType::Directory,
-                name: OsString::from("."),
-                offset: 1,
-                attr: FileAttr {
-                    ino: PARENT_INODE,
-                    size: 0,
-                    blocks: 0,
-                    atime: SystemTime::now().into(),
-                    mtime: SystemTime::now().into(),
-                    ctime: SystemTime::now().into(),
-                    kind: FileType::Directory,
-                    perm: PARENT_MODE,
-                    nlink: 0,
-                    uid: 0,
-                    gid: 0,
-                    rdev: 0,
-                    blksize: 0,
-                },
-                entry_ttl: TTL,
-                attr_ttl: TTL,
-            }),
-            Ok(DirectoryEntryPlus {
-                inode: PARENT_INODE,
-                generation: 0,
-                kind: FileType::Directory,
-                name: OsString::from(".."),
-                offset: 2,
-                attr: FileAttr {
-                    ino: PARENT_INODE,
-                    size: 0,
-                    blocks: 0,
-                    atime: SystemTime::now().into(),
-                    mtime: SystemTime::now().into(),
-                    ctime: SystemTime::now().into(),
-                    kind: FileType::Directory,
-                    perm: PARENT_MODE,
-                    nlink: 0,
-                    uid: 0,
-                    gid: 0,
-                    rdev: 0,
-                    blksize: 0,
-                },
-                entry_ttl: TTL,
-                attr_ttl: TTL,
-            }),
-        ];
+                perm: PARENT_MODE,
+                nlink: 0,
+                uid: 0,
+                gid: 0,
+                rdev: 0,
+                blksize: 0,
+            },
+            entry_ttl: TTL,
+            attr_ttl: TTL,
+        })];
 
         let all = or_enoent!(self.driver.all_keys().await);
-        let mut offset = 3;
+        let mut offset = 2;
 
         for (id, key) in all {
             entries.push(Ok(DirectoryEntryPlus {
                 inode: id,
-                generation: 0,
-                kind: FileType::Directory,
+                generation: 1,
+                kind: FileType::RegularFile,
                 name: or_enoent!(OsString::from_str(key.as_str())),
-                offset: 3,
+                offset,
                 attr: FileAttr {
                     ino: id,
                     size: 5000,
@@ -323,7 +282,7 @@ impl Filesystem for RedisFS {
         }
 
         Ok(ReplyDirectoryPlus {
-            entries: stream::iter(entries.into_iter().skip(offset as usize)),
+            entries: stream::iter(entries.into_iter().skip(req_offset as usize)),
         })
     }
 }
