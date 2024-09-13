@@ -39,12 +39,15 @@ macro_rules! or_enoent {
     };
 }
 
+// maximum redis value size
+const MAX_SIZE: u64 = 512 * 1024;
+
 impl Filesystem for RedisFS {
     async fn init(&self, _req: Request) -> Result<ReplyInit> {
         Ok(ReplyInit {
             // 512mb
             // https://stackoverflow.com/questions/5606106/what-is-the-maximum-value-size-you-can-store-in-redis
-            max_write: NonZeroU32::new(16 * 1024).unwrap(),
+            max_write: NonZeroU32::new(MAX_SIZE as _).unwrap(),
         })
     }
 
@@ -69,7 +72,7 @@ impl Filesystem for RedisFS {
             ttl: TTL,
             attr: FileAttr {
                 ino: id,
-                size: 5000,
+                size: MAX_SIZE,
                 blocks: 0,
                 atime: SystemTime::now().into(),
                 mtime: SystemTime::now().into(),
@@ -99,7 +102,7 @@ impl Filesystem for RedisFS {
                 ttl: TTL,
                 attr: FileAttr {
                     ino: PARENT_INODE,
-                    size: 4096,
+                    size: 0,
                     blocks: 1,
                     atime: SystemTime::now().into(),
                     mtime: SystemTime::now().into(),
@@ -110,7 +113,7 @@ impl Filesystem for RedisFS {
                     uid: 0,
                     gid: 0,
                     rdev: 0,
-                    blksize: 4096,
+                    blksize: 0,
                 },
             })
         } else {
@@ -118,7 +121,7 @@ impl Filesystem for RedisFS {
                 ttl: TTL,
                 attr: FileAttr {
                     ino: inode,
-                    size: 5000,
+                    size: MAX_SIZE,
                     blocks: 0,
                     atime: SystemTime::now().into(),
                     mtime: SystemTime::now().into(),
@@ -262,7 +265,7 @@ impl Filesystem for RedisFS {
                 offset,
                 attr: FileAttr {
                     ino: id,
-                    size: 5000,
+                    size: MAX_SIZE,
                     blocks: 0,
                     atime: SystemTime::now().into(),
                     mtime: SystemTime::now().into(),

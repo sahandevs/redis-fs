@@ -82,6 +82,7 @@ impl RedisDriver {
 
     pub async fn all_keys(&self) -> anyhow::Result<Vec<(u64, Arc<String>)>> {
         let mut conn = self.client.get_multiplexed_async_connection().await?;
+
         let keys: Vec<String> = conn.keys("*").await?;
 
         let mut id = self
