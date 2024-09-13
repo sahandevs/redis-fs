@@ -18,10 +18,10 @@ cargo install fuse-fs
 
 - [x] read a key
 - [x] list keys
-- [ ] write a key
+- [x] write a key
 - [ ] write automatic tests
 - [ ] make it more efficient
   - [ ] proper redis connection pool
   - [ ] streamed/buffered read and writes
   - [ ] use SCAN instead of KEYS for readdirplus
-- [ ] properly implement stats for keys
+- [ ] Map and Set support

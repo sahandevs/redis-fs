@@ -157,6 +157,35 @@ impl Filesystem for RedisFS {
         Ok(ReplyData { data })
     }
 
+    async fn write(
+        &self,
+        _req: Request,
+        inode: fuse3::Inode,
+        fh: u64,
+        offset: u64,
+        data: &[u8],
+        _write_flags: u32,
+        _flags: u32,
+    ) -> Result<ReplyWrite> {
+        trace!("write {inode} {fh} {offset} {}", data.len());
+        or_enoent!(self.driver.write(fh, offset, data).await);
+        Ok(ReplyWrite {
+            written: data.len() as _,
+        })
+    }
+
+    async fn flush(
+        &self,
+        _req: Request,
+        inode: fuse3::Inode,
+        fh: u64,
+        _lock_owner: u64,
+    ) -> Result<()> {
+        trace!("flush {inode} {fh}");
+        or_enoent!(self.driver.flush_write_buffer(fh).await);
+        Ok(())
+    }
+
     type DirEntryStream<'a> = Iter<Skip<IntoIter<Result<DirectoryEntry>>>> where Self: 'a;
 
     async fn readdir(
